@@ -7,17 +7,20 @@ import (
 	"github.com/pion/interceptor"
 	"github.com/pion/interceptor/pkg/intervalpli"
 	"github.com/pion/webrtc/v4"
+	"io"
 	"net/http"
-	"os"
+	"sync"
 	"ws-sfu-server/pkg/misc"
 	"ws-sfu-server/pkg/types"
 )
 
 type SfuPayload struct {
-	SDP     string `json:"sdp"`
-	Secret  string `json:"secret"`
-	ClassId string `json:"classId"`
-	Success bool   `json:"success"`
+	SDP                   string `json:"sdp"`
+	Secret                string `json:"secret"`
+	ClassId               string `json:"classId"`
+	Success               bool   `json:"success"`
+	IsInstructorConnected bool   `json:"isInstructorConnected"`
+	UserId                string `json:"userId"`
 }
 
 var peerConnectionConfig *webrtc.Configuration
@@ -25,21 +28,36 @@ var interceptorRegistry *interceptor.Registry
 var mediaEngine *webrtc.MediaEngine
 var intervalPliFactory *intervalpli.ReceiverInterceptorFactory
 
+func SignalInstructorConnected(ClassId string) {
+	if LiveClasses[ClassId].LocalAudioTrack == nil || LiveClasses[ClassId].LocalVideoTrack == nil {
+		return
+	}
+	if LiveClasses[ClassId].WaitingLearnerGroup != nil {
+		fmt.Println("Trying to open the thread")
+		fmt.Println("the length of the waiting learner channel is", len(LiveClasses[ClassId].LearnerPeerConnections))
+
+		for index := 0; index < len(LiveClasses[ClassId].LearnerPeerConnections); index++ {
+			LiveClasses[ClassId].WaitingLearnerGroup.Done()
+		}
+		LiveClasses[ClassId].WaitingLearnerGroup = nil
+	}
+}
+
 func HandleInitConnection(writer http.ResponseWriter, request *http.Request) {
 	err := godotenv.Load(".env")
 	if err != nil {
 		panic(err.Error())
 	}
-	turnIp := os.Getenv("TURN_IP")
+	//turnIp := os.Getenv("TURN_IP")
 
 	if peerConnectionConfig == nil {
 		peerConnectionConfig = &webrtc.Configuration{
 			ICEServers: []webrtc.ICEServer{
 				{
 					URLs: []string{
-						"stun:" + turnIp + ":3478",
+						//"stun:" + turnIp + ":3478",
 						"stun:stun.l.google.com:19302",
-						"turn:" + turnIp + ":3478",
+						//"turn:" + turnIp + ":3478",
 					},
 					Username:       "user",
 					Credential:     "pass",
@@ -63,12 +81,32 @@ func HandleInitConnection(writer http.ResponseWriter, request *http.Request) {
 		}
 	}(conn)
 
+	err = conn.ReadJSON(&payload)
+	if err != nil {
+		panic(err.Error())
+	}
+
+	if LiveClasses[payload.ClassId] == nil {
+		LiveClasses[payload.ClassId] = &LiveClass{}
+	}
+	err = conn.WriteJSON(&SfuPayload{
+		SDP:                   "",
+		Secret:                "",
+		ClassId:               "",
+		Success:               true,
+		IsInstructorConnected: LiveClasses[payload.ClassId].InstructorPeerConnection != nil,
+		// read the initial one for the sdp offer
+	})
+	if err != nil {
+		panic(err.Error())
+	}
+
 	if request.URL.Query().Get("user") == types.Instructor {
-		err := conn.ReadJSON(&payload) // read the initial one for the sdp offer
+		fmt.Println("Reached here")
 		if err != nil {
 			panic(err.Error())
 		}
-
+		fmt.Println(payload.SDP)
 		LiveClasses[payload.ClassId].InstructorWsConnection = conn
 
 		offer := webrtc.SessionDescription{}
@@ -140,56 +178,55 @@ func HandleInitConnection(writer http.ResponseWriter, request *http.Request) {
 		}
 		LiveClasses[payload.ClassId].InstructorPeerConnection = peerConnection
 		LiveClasses[payload.ClassId].ClassId = payload.ClassId
+		fmt.Println("It works 180")
 
-		if LiveClasses[payload.ClassId].WaitingLearnerChannel != nil {
-			for index := len(LiveClasses[payload.ClassId].WaitingLearnerChannel) - 1; index >= 0; index-- {
-				LiveClasses[payload.ClassId].WaitingLearnerChannel <- true
-			}
-		}
-
-		// when the instructor disconnects, the learner must repeat the websocket connection once more, and stall the thread until the instructor connects again
-		peerConnection.OnConnectionStateChange(func(state webrtc.PeerConnectionState) {
-			if state == webrtc.PeerConnectionStateDisconnected {
-				for _, Conn := range LiveClasses[payload.ClassId].LearnerWsConnection {
-					err := Conn.WriteJSON(&SfuPayload{
-						SDP:     "",
-						Secret:  "",
-						ClassId: "",
-						Success: false,
-					})
-					if err != nil {
-						panic(err.Error())
-					}
+		conn.SetCloseHandler(func(code int, text string) error {
+			fmt.Println("Writing the JSON for instructor disconnect")
+			for _, Conn := range LiveClasses[payload.ClassId].LearnerWsConnection {
+				err := Conn.WriteJSON(&SfuPayload{
+					SDP:                   "",
+					Secret:                "",
+					ClassId:               "",
+					Success:               false,
+					IsInstructorConnected: false,
+				})
+				if err != nil {
+					panic(err.Error())
 				}
-
-				for _, Peer := range LiveClasses[payload.ClassId].LearnerPeerConnections {
-					err := Peer.Close()
-					if err != nil {
-						panic(err.Error())
-					}
-				}
-
-				LiveClasses[payload.ClassId].InstructorPeerConnection = nil
-				LiveClasses[payload.ClassId].InstructorWsConnection = nil
-
-				return
 			}
+
+			for _, Peer := range LiveClasses[payload.ClassId].LearnerPeerConnections {
+				err := Peer.Close()
+				if err != nil {
+					panic(err.Error())
+				}
+			}
+
+			LiveClasses[payload.ClassId].InstructorPeerConnection = nil
+			LiveClasses[payload.ClassId].InstructorWsConnection = nil
+			return nil
 		})
+		// when the instructor disconnects, the learner must repeat the websocket connection once more, and stall the thread until the instructor connects again
+
+		LiveClasses[payload.ClassId].HandleBroadcast()
 
 		for {
 			fmt.Println("Attempting to read from the instructor")
 			err := conn.ReadJSON(&payload)
-			if LiveClasses[payload.ClassId].InstructorPeerConnection != nil {
+			if LiveClasses[payload.ClassId].InstructorPeerConnection == nil {
 				return
 			}
 			if err != nil {
+				if websocket.IsCloseError(err) || err == io.EOF {
+					panic("Connection closed:" + err.Error())
+				}
 				panic(err.Error())
-				return
 			}
 			fmt.Println("Received a payload from the instructor", payload.SDP)
 		}
 	} else {
 		// the learner case
+		fmt.Println(payload.SDP)
 		receiverOnlyOffer := webrtc.SessionDescription{}
 		decodePayload(&payload, &receiverOnlyOffer)
 
@@ -201,6 +238,18 @@ func HandleInitConnection(writer http.ResponseWriter, request *http.Request) {
 		if LiveClasses[payload.ClassId] == nil {
 			LiveClasses[payload.ClassId] = &LiveClass{}
 		}
+		if LiveClasses[payload.ClassId].LearnerWsConnection == nil {
+			LiveClasses[payload.ClassId].LearnerWsConnection = make(map[string]*websocket.Conn)
+			LiveClasses[payload.ClassId].LearnerPeerConnections = make(map[string]*webrtc.PeerConnection)
+		}
+		LiveClasses[payload.ClassId].LearnerWsConnection[payload.UserId] = conn
+		LiveClasses[payload.ClassId].LearnerPeerConnections[payload.UserId] = peerConnection
+
+		conn.SetCloseHandler(func(code int, text string) error {
+			delete(LiveClasses[payload.ClassId].LearnerWsConnection, payload.UserId)
+			delete(LiveClasses[payload.ClassId].LearnerPeerConnections, payload.UserId)
+			return nil
+		})
 
 		if LiveClasses[payload.ClassId].InstructorPeerConnection == nil {
 			//err := conn.WriteJSON(&SfuPayload{
@@ -214,21 +263,22 @@ func HandleInitConnection(writer http.ResponseWriter, request *http.Request) {
 			//	return
 			//}
 
-			LiveClasses[payload.ClassId].LearnerPeerConnections = append(LiveClasses[payload.ClassId].LearnerPeerConnections, peerConnection)
+			fmt.Println("the stalled thread")
 
-			LiveClasses[payload.ClassId].WaitingLearnerChannelMutex.Lock()
+			LiveClasses[payload.ClassId].WaitingLearnerGroupMutex.Lock()
+
 			// the waiters for the instructor to connect
-			if LiveClasses[payload.ClassId].WaitingLearnerChannel == nil {
-				LiveClasses[payload.ClassId].WaitingLearnerChannel = make(chan bool, len(LiveClasses[payload.ClassId].LearnerPeerConnections))
-			} else {
-				LiveClasses[payload.ClassId].WaitingLearnerChannel = nil
-				LiveClasses[payload.ClassId].WaitingLearnerChannel = make(chan bool, len(LiveClasses[payload.ClassId].LearnerPeerConnections))
+			if LiveClasses[payload.ClassId].WaitingLearnerGroup == nil {
+				LiveClasses[payload.ClassId].WaitingLearnerGroup = &sync.WaitGroup{}
 			}
-			LiveClasses[payload.ClassId].WaitingLearnerChannelMutex.Unlock()
+			LiveClasses[payload.ClassId].WaitingLearnerGroup.Add(1)
 
-			<-LiveClasses[payload.ClassId].WaitingLearnerChannel
+			LiveClasses[payload.ClassId].WaitingLearnerGroupMutex.Unlock()
+			fmt.Println("just before the stalling of thread")
+			LiveClasses[payload.ClassId].WaitingLearnerGroup.Wait()
+			fmt.Println("Just after that")
 		}
-
+		fmt.Println(LiveClasses[payload.ClassId].LocalVideoTrack)
 		rtpSender, err := peerConnection.AddTrack(LiveClasses[payload.ClassId].LocalVideoTrack)
 		if err != nil {
 			panic(err.Error())
@@ -244,9 +294,6 @@ func HandleInitConnection(writer http.ResponseWriter, request *http.Request) {
 			rtpBuf := make([]byte, 1000)
 			for {
 				_, _, rtpErr := rtpSender.Read(rtpBuf)
-				if rtpErr != nil {
-					panic(rtpErr.Error())
-				}
 				if LiveClasses[payload.ClassId].InstructorPeerConnection == nil {
 					err := conn.WriteJSON(&SfuPayload{
 						SDP:     "",
@@ -256,7 +303,14 @@ func HandleInitConnection(writer http.ResponseWriter, request *http.Request) {
 					})
 					if err != nil {
 						panic(err.Error())
+						return
 					}
+				}
+				if rtpErr != nil {
+					if rtpErr == io.EOF {
+						return
+					}
+					panic(rtpErr.Error())
 				}
 			}
 		}()
@@ -279,6 +333,36 @@ func HandleInitConnection(writer http.ResponseWriter, request *http.Request) {
 
 		<-gatherComplete
 
+		sdpString := encodeToBase64(&answer)
+		err = conn.WriteJSON(&SfuPayload{
+			SDP:     sdpString,
+			Secret:  "secret",
+			ClassId: payload.ClassId,
+			Success: true,
+		})
+		if err != nil {
+			panic(err.Error())
+		}
+
+		for {
+			fmt.Println("Attempting to read from the learner")
+			err := conn.ReadJSON(&payload)
+			if LiveClasses[payload.ClassId].InstructorPeerConnection == nil {
+				return
+			}
+			if LiveClasses[payload.ClassId].LearnerPeerConnections[payload.UserId] == nil {
+				return
+			}
+			if err != nil {
+				if websocket.IsCloseError(err) || err == io.EOF {
+					panic("Connection closed:" + err.Error())
+				}
+				panic(err.Error())
+			}
+			fmt.Println("Received a payload from the instructor", payload.SDP)
+		}
 	}
+
+	return
 
 }

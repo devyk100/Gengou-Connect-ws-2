@@ -3,6 +3,7 @@ package sfu
 import (
 	"fmt"
 	"github.com/pion/webrtc/v4"
+	"io"
 )
 
 func (liveClass *LiveClass) HandleBroadcast() {
@@ -13,12 +14,16 @@ func (liveClass *LiveClass) HandleBroadcast() {
 			if newTrackErr != nil {
 				panic(newTrackErr.Error())
 			}
-			liveClass.LocalAudioTrack = localTrack
+			liveClass.LocalVideoTrack = localTrack
 
 			rtpBuffer := make([]byte, 5000)
+			SignalInstructorConnected(liveClass.ClassId)
 			for {
 				i, _, readErr := remoteTrack.Read(rtpBuffer)
 				if readErr != nil {
+					if readErr == io.EOF {
+						return
+					}
 					panic(readErr.Error())
 				}
 
@@ -37,10 +42,13 @@ func (liveClass *LiveClass) HandleBroadcast() {
 			liveClass.LocalAudioTrack = localTrack
 
 			rtpBuffer := make([]byte, 5000)
-
+			SignalInstructorConnected(liveClass.ClassId)
 			for {
 				i, _, readErr := remoteTrack.Read(rtpBuffer)
 				if readErr != nil {
+					if readErr == io.EOF {
+						return
+					}
 					panic(readErr.Error())
 				}
 

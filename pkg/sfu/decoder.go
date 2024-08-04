@@ -11,7 +11,7 @@ func decodePayload(payload *SfuPayload, obj *webrtc.SessionDescription) {
 	if err != nil {
 		panic(err.Error())
 	}
-	err = json.Unmarshal(sdpString, obj)
+	err = json.Unmarshal([]byte(sdpString), obj)
 	if err != nil {
 		panic(err.Error())
 	}
