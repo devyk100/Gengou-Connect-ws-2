@@ -306,6 +306,10 @@ func HandleInitConnection(writer http.ResponseWriter, request *http.Request) {
 						return
 					}
 				}
+				if LiveClasses[payload.ClassId].LearnerPeerConnections == nil {
+					fmt.Println("Was deleted")
+					return
+				}
 				if rtpErr != nil {
 					if rtpErr == io.EOF {
 						return
