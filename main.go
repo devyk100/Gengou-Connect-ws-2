@@ -3,7 +3,10 @@ package main
 import (
 	"context"
 	"github.com/joho/godotenv"
+	"net/http"
+	"ws-sfu-server/pkg/connections"
 	"ws-sfu-server/pkg/db"
+	"ws-sfu-server/pkg/sfu"
 )
 
 var database *db.Db
@@ -21,8 +24,10 @@ func main() {
 	ctx := context.Background()
 	database = &db.Db{}
 	database.InitDbConnection(ctx)
-	//http.HandleFunc("/ws", connections.HandleInitConnection)
-	//err = http.ListenAndServe(":8000", nil)
+	http.HandleFunc("/ws", connections.HandleInitConnection)
+	http.HandleFunc("/sfu", sfu.HandleInitConnection)
+	http.HandleFunc("/sfu-many", sfu.HandleInitConnection)
+	err = http.ListenAndServe(":8000", nil)
 	if err != nil {
 		panic(err.Error())
 		return
