@@ -10,6 +10,7 @@ func (liveClass *LiveClass) HandleBroadcast() {
 	liveClass.InstructorPeerConnection.OnTrack(func(remoteTrack *webrtc.TrackRemote, receiver *webrtc.RTPReceiver) {
 		trackType := remoteTrack.Kind().String()
 		if trackType == "video" {
+			fmt.Println("Starting video broadcast")
 			localTrack, newTrackErr := webrtc.NewTrackLocalStaticRTP(remoteTrack.Codec().RTPCodecCapability, "video", liveClass.ClassId)
 			if newTrackErr != nil {
 				panic(newTrackErr.Error())
@@ -33,7 +34,7 @@ func (liveClass *LiveClass) HandleBroadcast() {
 				}
 			}
 		} else if trackType == "audio" {
-			fmt.Println("Audio track testing")
+			fmt.Println("Starting audio broadcast")
 			localTrack, newTrackErr := webrtc.NewTrackLocalStaticRTP(remoteTrack.Codec().RTPCodecCapability, "audio", liveClass.ClassId)
 			if newTrackErr != nil {
 				panic(newTrackErr.Error())
