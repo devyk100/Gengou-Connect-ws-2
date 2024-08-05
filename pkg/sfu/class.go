@@ -15,6 +15,7 @@ type LiveClass struct {
 	LearnerWsConnection      map[string]*websocket.Conn
 	LearnerPeerConnections   map[string]*webrtc.PeerConnection
 	WaitingLearnerGroup      *sync.WaitGroup
+	WaitingLearnerBroadcast  *sync.Cond
 	WaitingLearnerGroupMutex sync.Mutex
 }
 

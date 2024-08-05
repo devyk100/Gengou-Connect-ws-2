@@ -15,12 +15,15 @@ func SignalInstructorConnected(ClassId string) {
 	if LiveClasses[ClassId].WaitingLearnerGroup != nil {
 		fmt.Println("Trying to open the thread")
 		fmt.Println("the length of the waiting learner channel is", len(LiveClasses[ClassId].LearnerPeerConnections))
-
+		LiveClasses[ClassId].WaitingLearnerGroupMutex.Lock()
 		for _, _ = range LiveClasses[ClassId].LearnerPeerConnections {
+
 			LiveClasses[ClassId].WaitingLearnerGroup.Done()
 		}
+		LiveClasses[ClassId].WaitingLearnerGroupMutex.Unlock()
 		LiveClasses[ClassId].WaitingLearnerGroup = nil
 	}
+
 }
 
 func handleInstructorOneToManyConnection(payload SfuPayload, conn *websocket.Conn) error {

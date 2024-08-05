@@ -33,7 +33,11 @@ func handleLearnerOneToManyConnection(payload SfuPayload, conn *websocket.Conn) 
 	LiveClasses[payload.ClassId].LearnerPeerConnections[payload.UserId] = peerConnection
 
 	conn.SetCloseHandler(func(code int, text string) error {
-		//LiveClasses[payload.ClassId].WaitingLearnerGroup.Done()
+		if LiveClasses[payload.ClassId].WaitingLearnerGroup != nil {
+			LiveClasses[payload.ClassId].WaitingLearnerGroupMutex.Lock()
+			LiveClasses[payload.ClassId].WaitingLearnerGroup.Done()
+			LiveClasses[payload.ClassId].WaitingLearnerGroupMutex.Unlock()
+		}
 		fmt.Println("The learner is trying to disconnect.")
 		delete(LiveClasses[payload.ClassId].LearnerWsConnection, payload.UserId)
 		delete(LiveClasses[payload.ClassId].LearnerPeerConnections, payload.UserId)
