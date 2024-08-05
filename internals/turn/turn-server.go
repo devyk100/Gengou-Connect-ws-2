@@ -18,14 +18,14 @@ import (
 var isTurnStarted bool = false
 var turnStopChannel chan bool = make(chan bool)
 
-func TurnStarter() chan bool {
-	isTurnStarted = true
-	go runTurn(turnStopChannel)
-	return turnStopChannel
-}
-
-func IsTurnStarted() bool {
-	return isTurnStarted
+func TurnStarter() {
+	if isTurnStarted {
+		return
+	} else {
+		isTurnStarted = true
+		go runTurn(turnStopChannel)
+		return
+	}
 }
 
 func runTurn(turnStopChannel chan bool) {

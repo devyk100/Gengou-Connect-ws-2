@@ -9,18 +9,19 @@ import (
 	"github.com/pion/webrtc/v4"
 	"io"
 	"net/http"
+	"os"
 	"sync"
 	"ws-sfu-server/pkg/misc"
 	"ws-sfu-server/pkg/types"
 )
 
 type SfuPayload struct {
-	SDP                   string `json:"sdp"`
-	Secret                string `json:"secret"`
-	ClassId               string `json:"classId"`
-	Success               bool   `json:"success"`
-	IsInstructorConnected bool   `json:"isInstructorConnected"`
-	UserId                string `json:"userId"`
+	UserId     string `json:"userId"`
+	SDP        string `json:"sdp"`
+	Secret     string `json:"secret"`
+	ClassId    string `json:"classId"`
+	Disconnect bool   `json:"disconnect"`
+	//UserId                string `json:"userId"`
 }
 
 var peerConnectionConfig *webrtc.Configuration
@@ -36,7 +37,7 @@ func SignalInstructorConnected(ClassId string) {
 		fmt.Println("Trying to open the thread")
 		fmt.Println("the length of the waiting learner channel is", len(LiveClasses[ClassId].LearnerPeerConnections))
 
-		for index := 0; index < len(LiveClasses[ClassId].LearnerPeerConnections); index++ {
+		for _, _ = range LiveClasses[ClassId].LearnerPeerConnections {
 			LiveClasses[ClassId].WaitingLearnerGroup.Done()
 		}
 		LiveClasses[ClassId].WaitingLearnerGroup = nil
@@ -48,16 +49,16 @@ func HandleInitConnection(writer http.ResponseWriter, request *http.Request) {
 	if err != nil {
 		panic(err.Error())
 	}
-	//turnIp := os.Getenv("TURN_IP")
+	turnIp := os.Getenv("TURN_IP")
 
 	if peerConnectionConfig == nil {
 		peerConnectionConfig = &webrtc.Configuration{
 			ICEServers: []webrtc.ICEServer{
 				{
 					URLs: []string{
-						//"stun:" + turnIp + ":3478",
+						"turn:" + turnIp + ":3478",
+						"stun:" + turnIp + ":3478",
 						"stun:stun.l.google.com:19302",
-						//"turn:" + turnIp + ":3478",
 					},
 					Username:       "user",
 					Credential:     "pass",
@@ -74,12 +75,12 @@ func HandleInitConnection(writer http.ResponseWriter, request *http.Request) {
 
 	payload := SfuPayload{}
 
-	defer func(conn *websocket.Conn) {
-		err := conn.Close()
-		if err != nil {
-			panic(err.Error())
-		}
-	}(conn)
+	//defer func(conn *websocket.Conn) {
+	//	err := conn.Close()
+	//	if err != nil {
+	//		panic(err.Error())
+	//	}
+	//}(conn)
 
 	err = conn.ReadJSON(&payload)
 	if err != nil {
@@ -90,11 +91,11 @@ func HandleInitConnection(writer http.ResponseWriter, request *http.Request) {
 		LiveClasses[payload.ClassId] = &LiveClass{}
 	}
 	err = conn.WriteJSON(&SfuPayload{
-		SDP:                   "",
-		Secret:                "",
-		ClassId:               "",
-		Success:               true,
-		IsInstructorConnected: LiveClasses[payload.ClassId].InstructorPeerConnection != nil,
+		SDP:        "",
+		Secret:     "",
+		ClassId:    "",
+		Disconnect: false,
+		UserId:     payload.UserId,
 		// read the initial one for the sdp offer
 	})
 	if err != nil {
@@ -294,7 +295,17 @@ func HandleInitConnection(writer http.ResponseWriter, request *http.Request) {
 			rtpBuf := make([]byte, 1000)
 			for {
 				_, _, rtpErr := rtpSender.Read(rtpBuf)
+				//if LiveClasses[payload.ClassId].LearnerPeerConnections == nil {
+				//	fmt.Println("Was deleted")
+				//	return
+				//}
 				if LiveClasses[payload.ClassId].InstructorPeerConnection == nil {
+					//_, writeErr := conn.NextWriter(websocket.TextMessage)
+					//if writeErr != nil {
+					//	fmt.Println(writeErr.Error())
+					//	fmt.Println("Write next error occured")
+					//	return
+					//}
 					err := conn.WriteJSON(&SfuPayload{
 						SDP:     "",
 						Secret:  "",
@@ -302,13 +313,9 @@ func HandleInitConnection(writer http.ResponseWriter, request *http.Request) {
 						Success: false,
 					})
 					if err != nil {
-						panic(err.Error())
+						fmt.Println(err.Error())
 						return
 					}
-				}
-				if LiveClasses[payload.ClassId].LearnerPeerConnections == nil {
-					fmt.Println("Was deleted")
-					return
 				}
 				if rtpErr != nil {
 					if rtpErr == io.EOF {

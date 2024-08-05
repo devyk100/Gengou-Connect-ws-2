@@ -4,6 +4,7 @@ import (
 	"context"
 	"github.com/joho/godotenv"
 	"net/http"
+	webrtc_turn "ws-sfu-server/internals/turn"
 	"ws-sfu-server/pkg/connections"
 	"ws-sfu-server/pkg/db"
 	"ws-sfu-server/pkg/sfu"
@@ -27,6 +28,7 @@ func main() {
 	http.HandleFunc("/ws", connections.HandleInitConnection)
 	http.HandleFunc("/sfu", sfu.HandleInitConnection)
 	http.HandleFunc("/sfu-many", sfu.HandleInitConnection)
+	webrtc_turn.TurnStarter()
 	err = http.ListenAndServe(":8000", nil)
 	if err != nil {
 		panic(err.Error())
